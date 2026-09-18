@@ -171,6 +171,36 @@ class FlightStatusControllerTest {
                 .isEqualTo(FlightStatus.IN_AIR);
     }
 
+    @Test
+    void returns400WithoutFieldErrorsWhenTheBodyIsNotValidJson() throws Exception {
+        Long id = givenFlight("WEB500", FlightStatus.SCHEDULED);
+
+        mockMvc.perform(patch("/api/flights/{id}/status", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("ValidationFailed"))
+                .andExpect(jsonPath("$.message").value("Request body is not readable"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.fieldErrors").doesNotExist());
+    }
+
+    @Test
+    void returns400WithoutFieldErrorsWhenTheBodyIsNotAnObject() throws Exception {
+        Long id = givenFlight("WEB510", FlightStatus.SCHEDULED);
+
+        mockMvc.perform(patch("/api/flights/{id}/status", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[]"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("ValidationFailed"))
+                .andExpect(jsonPath("$.message").value("Request body is not readable"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.fieldErrors").doesNotExist());
+    }
+
     private Long givenFlight(String flightNumber, FlightStatus status) {
         LocalDateTime departure = LocalDateTime.now().plusDays(1);
         Flight flight = new Flight(flightNumber, "JFK", "LHR", departure, departure.plusHours(3));
