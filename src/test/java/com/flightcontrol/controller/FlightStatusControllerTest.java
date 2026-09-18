@@ -201,6 +201,30 @@ class FlightStatusControllerTest {
                 .andExpect(jsonPath("$.fieldErrors").doesNotExist());
     }
 
+    @Test
+    void returns400NamingThePathVariableWhenTheIdIsNotANumber() throws Exception {
+        mockMvc.perform(patch("/api/flights/{id}/status", "abc")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DEPARTED\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("ValidationFailed"))
+                .andExpect(jsonPath("$.message").value("Request parameter is not valid"))
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.fieldErrors.id").value("must be a number"));
+    }
+
+    @Test
+    void doesNotLeakSpringDefaultErrorFieldsForAnUnconvertibleId() throws Exception {
+        mockMvc.perform(patch("/api/flights/{id}/status", "abc")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DEPARTED\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.path").doesNotExist())
+                .andExpect(jsonPath("$.exception").doesNotExist())
+                .andExpect(jsonPath("$.trace").doesNotExist());
+    }
+
     private Long givenFlight(String flightNumber, FlightStatus status) {
         LocalDateTime departure = LocalDateTime.now().plusDays(1);
         Flight flight = new Flight(flightNumber, "JFK", "LHR", departure, departure.plusHours(3));

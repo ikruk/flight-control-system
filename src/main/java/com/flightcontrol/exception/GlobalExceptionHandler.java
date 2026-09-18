@@ -7,6 +7,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -34,6 +35,35 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleIllegalTransition(IllegalStatusTransitionException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiErrorResponse.of(HttpStatus.CONFLICT, "IllegalStatusTransition", ex.getMessage()));
+    }
+
+    /**
+     * A path variable or request parameter that will not convert to its declared type - for
+     * example a non-numeric flight id. Keyed by parameter name so clients read fieldErrors the
+     * same way they do for body validation failures.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        fieldErrors.put(ex.getName(), "must be %s".formatted(expectedTypeOf(ex)));
+        return ResponseEntity.badRequest()
+                .body(ApiErrorResponse.validationFailed("Request parameter is not valid", fieldErrors));
+    }
+
+    private static String expectedTypeOf(MethodArgumentTypeMismatchException ex) {
+        Class<?> required = ex.getRequiredType();
+        if (required == null) {
+            return "a valid value";
+        }
+        if (Number.class.isAssignableFrom(required)) {
+            return "a number";
+        }
+        if (required.isEnum()) {
+            return "one of: " + Arrays.stream(required.getEnumConstants())
+                    .map(Object::toString)
+                    .collect(Collectors.joining(", "));
+        }
+        return "a valid %s".formatted(required.getSimpleName());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
