@@ -4,6 +4,7 @@ import com.flightcontrol.domain.Flight;
 import com.flightcontrol.domain.FlightStatus;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record FlightResponse(
         Long id,
@@ -13,6 +14,7 @@ public record FlightResponse(
         LocalDateTime departureTime,
         LocalDateTime arrivalTime,
         FlightStatus status,
+        List<FlightStatus> allowedNextStatuses,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
@@ -26,6 +28,7 @@ public record FlightResponse(
                 flight.getDepartureTime(),
                 flight.getArrivalTime(),
                 flight.getStatus(),
+                List.copyOf(flight.getStatus().allowedNextStatuses()),
                 flight.getCreatedAt(),
                 flight.getUpdatedAt());
     }
