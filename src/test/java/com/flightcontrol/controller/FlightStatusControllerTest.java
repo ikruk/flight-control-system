@@ -42,7 +42,8 @@ class FlightStatusControllerTest {
                 .andExpect(jsonPath("$.id").value(id))
                 .andExpect(jsonPath("$.flightNumber").value("WEB100"))
                 .andExpect(jsonPath("$.status").value("DEPARTED"))
-                .andExpect(jsonPath("$.allowedNextStatuses").value("IN_AIR"))
+                .andExpect(jsonPath("$.allowedNextStatuses[0]").value("IN_AIR"))
+                .andExpect(jsonPath("$.allowedNextStatuses.length()").value(1))
                 .andExpect(jsonPath("$.origin").value("JFK"))
                 .andExpect(jsonPath("$.destination").value("LHR"))
                 .andExpect(jsonPath("$.createdAt").exists())
@@ -60,6 +61,20 @@ class FlightStatusControllerTest {
                 .andExpect(jsonPath("$.status").value("IN_AIR"))
                 .andExpect(jsonPath("$.allowedNextStatuses[0]").value("LANDED"))
                 .andExpect(jsonPath("$.allowedNextStatuses.length()").value(1));
+    }
+
+    @Test
+    void listsMultipleAllowedNextStatusesInDeclarationOrder() throws Exception {
+        Long id = givenFlight("WEB130", FlightStatus.SCHEDULED);
+
+        mockMvc.perform(patch("/api/flights/{id}/status", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DELAYED\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DELAYED"))
+                .andExpect(jsonPath("$.allowedNextStatuses[0]").value("DEPARTED"))
+                .andExpect(jsonPath("$.allowedNextStatuses[1]").value("CANCELLED"))
+                .andExpect(jsonPath("$.allowedNextStatuses.length()").value(2));
     }
 
     @Test
