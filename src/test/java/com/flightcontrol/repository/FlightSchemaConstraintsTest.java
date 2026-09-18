@@ -38,6 +38,18 @@ class FlightSchemaConstraintsTest {
     }
 
     @Test
+    void databaseRejectsLowercaseFlightNumber() {
+        assertThatThrownBy(() -> jdbcTemplate.update(INSERT, "low100", "SCHEDULED"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void databaseRejectsMixedCaseFlightNumber() {
+        assertThatThrownBy(() -> jdbcTemplate.update(INSERT, "Mix100", "SCHEDULED"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     void databaseRejectsUnknownStatus() {
         assertThatThrownBy(() -> jdbcTemplate.update(INSERT, "BAD100", "BOARDING"))
                 .isInstanceOf(DataIntegrityViolationException.class);

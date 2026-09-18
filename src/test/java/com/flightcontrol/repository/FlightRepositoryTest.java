@@ -77,6 +77,24 @@ class FlightRepositoryTest {
         assertThat(found.getUpdatedAt()).isAfter(firstUpdatedAt);
     }
 
+    @Test
+    void findsExistingFlightNumberRegardlessOfCase() {
+        flightRepository.saveAndFlush(aFlight("CASE100"));
+
+        assertThat(flightRepository.existsByFlightNumberIgnoreCase("case100")).isTrue();
+        assertThat(flightRepository.existsByFlightNumberIgnoreCase("CASE100")).isTrue();
+        assertThat(flightRepository.existsByFlightNumberIgnoreCase("CASE999")).isFalse();
+    }
+
+    @Test
+    void ignoresTheFlightItselfWhenLookingForAnotherWithTheSameNumber() {
+        Flight own = flightRepository.saveAndFlush(aFlight("SELF100"));
+        Flight other = flightRepository.saveAndFlush(aFlight("SELF200"));
+
+        assertThat(flightRepository.existsByFlightNumberIgnoreCaseAndIdNot("self100", own.getId())).isFalse();
+        assertThat(flightRepository.existsByFlightNumberIgnoreCaseAndIdNot("self100", other.getId())).isTrue();
+    }
+
     private static Flight aFlight(String flightNumber) {
         LocalDateTime departure = LocalDateTime.now().plusDays(1);
         return new Flight(flightNumber, "JFK", "LHR", departure, departure.plusHours(3));

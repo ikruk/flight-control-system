@@ -9,5 +9,6 @@ CREATE TABLE flights (
     created_at     TIMESTAMP    NOT NULL DEFAULT LOCALTIMESTAMP,
     updated_at     TIMESTAMP    NOT NULL DEFAULT LOCALTIMESTAMP,
     CONSTRAINT uk_flights_flight_number UNIQUE (flight_number),
+    CONSTRAINT ck_flights_flight_number_upper CHECK (flight_number = UPPER(flight_number)),
     CONSTRAINT ck_flights_status CHECK (status IN ('SCHEDULED', 'DELAYED', 'DEPARTED', 'IN_AIR', 'LANDED', 'CANCELLED'))
 );
