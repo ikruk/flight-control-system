@@ -1,10 +1,13 @@
 package com.flightcontrol.service;
 
 import com.flightcontrol.domain.Flight;
+import com.flightcontrol.domain.FlightStatus;
 import com.flightcontrol.dto.FlightRequest;
 import com.flightcontrol.dto.FlightResponse;
 import com.flightcontrol.exception.BusinessRuleViolationException;
 import com.flightcontrol.exception.DuplicateFlightNumberException;
+import com.flightcontrol.exception.FlightNotFoundException;
+import com.flightcontrol.exception.IllegalStatusTransitionException;
 import com.flightcontrol.repository.FlightRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +40,17 @@ public class FlightService {
                 details.departureTime(), details.arrivalTime());
         // Flush so a unique-constraint race surfaces here, translated, not at commit.
         return FlightResponse.from(flightRepository.saveAndFlush(flight));
+    }
+
+    @Transactional
+    public FlightResponse transitionStatus(Long id, FlightStatus target) {
+        Flight flight = flightRepository.findById(id)
+                .orElseThrow(() -> new FlightNotFoundException(id));
+        if (!flight.getStatus().canTransitionTo(target)) {
+            throw new IllegalStatusTransitionException(flight);
+        }
+        flight.setStatus(target);
+        return FlightResponse.from(flight);
     }
 
     private static FlightRequest normalize(FlightRequest request) {
