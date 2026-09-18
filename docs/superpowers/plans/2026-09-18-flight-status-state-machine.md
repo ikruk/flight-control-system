@@ -10,6 +10,22 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-18-flight-status-state-machine-design.md`
 
+**Baseline (read this before Task 2).** Story 2's service-level work is already
+committed (`0cd553a`). Existing and NOT to be rewritten:
+
+- `FlightService(FlightRepository, Clock)` with `create(FlightRequest)` returning
+  `FlightResponse`. Story 3 adds a method to this class; it does not create it.
+- `FlightResponse` (no `allowedNextStatuses` yet), `FlightRequest`, `ClockConfig`.
+- `BusinessRuleViolationException`, `DuplicateFlightNumberException` — leave unmapped.
+- `FlightServiceTest`, Mockito-based. Story 3 adds a separate test class.
+- `spring-boot-starter-validation` is already a dependency. Do not re-add it.
+
+Consequences, decided with the user and reflected in the tasks below:
+
+1. `transitionStatus` returns `FlightResponse`, matching `create`.
+2. Transition service tests live in a new `FlightTransitionServiceTest`.
+3. The advice maps Story 3's exceptions only.
+
 ## Global Constraints
 
 - Layering per `CLAUDE.md`: `controller/` HTTP only, `service/` all business rules, `repository/` no logic, `domain/` entities and enums, `dto/` request/response records, `exception/` domain exceptions + one advice.
@@ -25,9 +41,9 @@
 - Package root: `com.flightcontrol`.
 - Out of scope, do not add: create/update/delete/search endpoints, `editable`/`deletable` response fields, optimistic locking (`@Version`).
 
-**Deviation from the spec, already decided:** the spec's service sketch shows `new IllegalStatusTransitionException(flight, target)`. The approved message text never mentions the target, so the exception takes `Flight` only — an unused constructor parameter would be dead weight. Message text itself is unchanged from the spec.
+**Deviation from the spec's sketch, already decided:** the spec showed `new IllegalStatusTransitionException(flight, target)`. The approved message text never mentions the target, so the exception takes `Flight` only — an unused constructor parameter would be dead weight. Message text itself is unchanged from the spec.
 
-**Baseline:** all 11 existing tests pass and `mvn clean verify` is warning-free. Keep it that way; every task ends green.
+**Green baseline:** `mvn clean verify` passes today with Story 1 + Story 2 tests. Run it before Task 1 and record the test count; every task ends green with that count only going up.
 
 ---
 
@@ -203,22 +219,24 @@ git commit -m "Add transition table to FlightStatus (Story 3)"
 **Files:**
 - Create: `src/main/java/com/flightcontrol/exception/FlightNotFoundException.java`
 - Create: `src/main/java/com/flightcontrol/exception/IllegalStatusTransitionException.java`
-- Create: `src/main/java/com/flightcontrol/service/FlightService.java`
-- Test: `src/test/java/com/flightcontrol/service/FlightServiceTest.java`
+- Modify: `src/main/java/com/flightcontrol/service/FlightService.java` (add one method; leave `create` and its helpers untouched)
+- Test: `src/test/java/com/flightcontrol/service/FlightTransitionServiceTest.java` (new file — do not edit the existing `FlightServiceTest`)
 
 **Interfaces:**
-- Consumes: `FlightStatus.canTransitionTo(FlightStatus)`, `FlightStatus.isTerminal()`, `FlightStatus.allowedNextStatuses()` (Task 1); `FlightRepository` and `Flight` (Story 1).
-- Produces: `Flight FlightService.transitionStatus(Long id, FlightStatus target)`; `FlightNotFoundException(Long id)`; `IllegalStatusTransitionException(Flight flight)`. Both exceptions extend `RuntimeException` and carry a finished message in `getMessage()`.
+- Consumes: `FlightStatus.canTransitionTo(FlightStatus)`, `FlightStatus.isTerminal()`, `FlightStatus.allowedNextStatuses()` (Task 1); `FlightRepository`, `Flight` (Story 1); `FlightResponse.from(Flight)`, `ClockConfig` (Story 2).
+- Produces: `FlightResponse FlightService.transitionStatus(Long id, FlightStatus target)`; `FlightNotFoundException(Long id)`; `IllegalStatusTransitionException(Flight flight)`. Both exceptions extend `RuntimeException` and carry a finished message in `getMessage()`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `src/test/java/com/flightcontrol/service/FlightServiceTest.java`:
+Create `src/test/java/com/flightcontrol/service/FlightTransitionServiceTest.java`. This is a **new file**; Story 2's `FlightServiceTest` in the same package is not touched.
 
 ```java
 package com.flightcontrol.service;
 
+import com.flightcontrol.config.ClockConfig;
 import com.flightcontrol.domain.Flight;
 import com.flightcontrol.domain.FlightStatus;
+import com.flightcontrol.dto.FlightResponse;
 import com.flightcontrol.exception.FlightNotFoundException;
 import com.flightcontrol.exception.IllegalStatusTransitionException;
 import com.flightcontrol.repository.FlightRepository;
@@ -236,16 +254,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DataJpaTest
-@Import(FlightService.class)
-class FlightServiceTest {
+@Import({FlightService.class, ClockConfig.class})
+class FlightTransitionServiceTest {
 
     private final FlightService flightService;
     private final FlightRepository flightRepository;
     private final TestEntityManager entityManager;
 
     @Autowired
-    FlightServiceTest(FlightService flightService, FlightRepository flightRepository,
-                      TestEntityManager entityManager) {
+    FlightTransitionServiceTest(FlightService flightService, FlightRepository flightRepository,
+                                TestEntityManager entityManager) {
         this.flightService = flightService;
         this.flightRepository = flightRepository;
         this.entityManager = entityManager;
@@ -255,13 +273,15 @@ class FlightServiceTest {
     void appliesAndPersistsALegalTransition() {
         Long id = givenFlight("SVC100", FlightStatus.SCHEDULED).getId();
 
-        flightService.transitionStatus(id, FlightStatus.DEPARTED);
+        FlightResponse response = flightService.transitionStatus(id, FlightStatus.DEPARTED);
         entityManager.flush();
         entityManager.clear();
 
+        assertThat(response.status()).isEqualTo(FlightStatus.DEPARTED);
         assertThat(flightRepository.findById(id).orElseThrow().getStatus())
                 .isEqualTo(FlightStatus.DEPARTED);
     }
+
 
     @Test
     void refreshesUpdatedAtWhenTransitioning() {
@@ -342,15 +362,16 @@ class FlightServiceTest {
 }
 ```
 
-Two notes for the implementer:
+Three notes for the implementer:
 
-- `@DataJpaTest` gives a real repository against real H2, and `@Import(FlightService.class)` adds the real service. No mocks — these tests exercise the code that ships.
+- `@DataJpaTest` gives a real repository against real H2, and `@Import({FlightService.class, ClockConfig.class})` adds the real service. `ClockConfig` is required: `FlightService`'s constructor takes a `Clock`, and a `@DataJpaTest` slice does not pick up `@Configuration` classes on its own. Without it the context fails with `No qualifying bean of type 'java.time.Clock'`.
+- No mocks — these tests exercise the code that ships. Story 2's `FlightServiceTest` mocks the repository; that is its choice, not a pattern to copy here.
 - `hasMessage(...)` pins the exact wording because Story 3 requires the message to name the current status and the allowed set.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `mvn test -Dtest=FlightServiceTest`
-Expected: COMPILATION FAILURE — `package com.flightcontrol.service does not exist`, `cannot find symbol: class FlightNotFoundException`, `class IllegalStatusTransitionException`.
+Run: `mvn test -Dtest=FlightTransitionServiceTest`
+Expected: COMPILATION FAILURE — `cannot find symbol: class FlightNotFoundException`, `class IllegalStatusTransitionException`, and `method transitionStatus(Long,FlightStatus)` on `FlightService`.
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -399,57 +420,47 @@ public class IllegalStatusTransitionException extends RuntimeException {
 }
 ```
 
-Create `src/main/java/com/flightcontrol/service/FlightService.java`:
+Modify `src/main/java/com/flightcontrol/service/FlightService.java`. Add these imports alongside the existing ones:
 
 ```java
-package com.flightcontrol.service;
-
-import com.flightcontrol.domain.Flight;
 import com.flightcontrol.domain.FlightStatus;
 import com.flightcontrol.exception.FlightNotFoundException;
 import com.flightcontrol.exception.IllegalStatusTransitionException;
-import com.flightcontrol.repository.FlightRepository;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+```
 
-@Service
-public class FlightService {
+Then add this method directly after `create`, leaving `create`, `normalize` and `validateDataRules` exactly as they are:
 
-    private final FlightRepository flightRepository;
-
-    public FlightService(FlightRepository flightRepository) {
-        this.flightRepository = flightRepository;
-    }
-
+```java
     @Transactional
-    public Flight transitionStatus(Long id, FlightStatus target) {
+    public FlightResponse transitionStatus(Long id, FlightStatus target) {
         Flight flight = flightRepository.findById(id)
                 .orElseThrow(() -> new FlightNotFoundException(id));
         if (!flight.getStatus().canTransitionTo(target)) {
             throw new IllegalStatusTransitionException(flight);
         }
         flight.setStatus(target);
-        return flight;
+        return FlightResponse.from(flight);
     }
-}
 ```
+
+`Flight`, `FlightResponse`, `FlightRepository`, `@Service` and `@Transactional` are already imported by the existing file. Do not change the constructor — it takes `(FlightRepository, Clock)` and the `Clock` belongs to `create`'s validation.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `mvn test -Dtest=FlightServiceTest`
-Expected: PASS.
+Run: `mvn test -Dtest=FlightTransitionServiceTest`
+Expected: PASS, 18 tests.
 
 If `refreshesUpdatedAtWhenTransitioning` fails on an equal timestamp, do not weaken the assertion — check that `Flight.onUpdate()` is still annotated `@PreUpdate` and that the test flushes.
 
 - [ ] **Step 5: Run the whole suite**
 
 Run: `mvn test`
-Expected: PASS.
+Expected: PASS. Story 2's `FlightServiceTest` must still be green — if it is not, `FlightService` was edited beyond adding the new method.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/main/java/com/flightcontrol/exception src/main/java/com/flightcontrol/service src/test/java/com/flightcontrol/service
+git add src/main/java/com/flightcontrol/exception src/main/java/com/flightcontrol/service/FlightService.java src/test/java/com/flightcontrol/service/FlightTransitionServiceTest.java
 git commit -m "Add FlightService.transitionStatus with transition guards (Story 3)"
 ```
 
@@ -458,15 +469,16 @@ git commit -m "Add FlightService.transitionStatus with transition guards (Story 
 ### Task 3: `PATCH /api/flights/{id}/status` happy path
 
 **Files:**
-- Modify: `pom.xml` (add `spring-boot-starter-validation`)
+- Modify: `src/main/java/com/flightcontrol/dto/FlightResponse.java` (add one field)
 - Create: `src/main/java/com/flightcontrol/dto/StatusTransitionRequest.java`
-- Create: `src/main/java/com/flightcontrol/dto/FlightResponse.java`
 - Create: `src/main/java/com/flightcontrol/controller/FlightStatusController.java`
 - Test: `src/test/java/com/flightcontrol/controller/FlightStatusControllerTest.java`
 
+No `pom.xml` change — `spring-boot-starter-validation` arrived with Story 2.
+
 **Interfaces:**
-- Consumes: `FlightService.transitionStatus(Long, FlightStatus)` (Task 2); `FlightStatus.allowedNextStatuses()` (Task 1).
-- Produces: `FlightResponse.from(Flight)` returning a record with fields `id, flightNumber, origin, destination, departureTime, arrivalTime, status, allowedNextStatuses, createdAt, updatedAt`; `StatusTransitionRequest(FlightStatus status)`; the endpoint `PATCH /api/flights/{id}/status`.
+- Consumes: `FlightService.transitionStatus(Long, FlightStatus)` returning `FlightResponse` (Task 2); `FlightStatus.allowedNextStatuses()` (Task 1).
+- Produces: `FlightResponse` gains `List<FlightStatus> allowedNextStatuses` as its eighth component, between `status` and `createdAt`; `StatusTransitionRequest(FlightStatus status)`; the endpoint `PATCH /api/flights/{id}/status`.
 
 Error-path tests (404, 409, 400) belong to Task 4 — this task stops at 200.
 
@@ -569,15 +581,6 @@ Expected: the test compiles (it references only classes that already exist) and 
 
 - [ ] **Step 3: Write the minimal implementation**
 
-Add to `pom.xml`, in `<dependencies>`, directly after the `spring-boot-starter-data-jpa` entry:
-
-```xml
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-```
-
 Create `src/main/java/com/flightcontrol/dto/StatusTransitionRequest.java`:
 
 ```java
@@ -590,7 +593,7 @@ public record StatusTransitionRequest(@NotNull(message = "must not be null") Fli
 }
 ```
 
-Create `src/main/java/com/flightcontrol/dto/FlightResponse.java`:
+Modify `src/main/java/com/flightcontrol/dto/FlightResponse.java` — add the `allowedNextStatuses` component and populate it in `from`. The existing file becomes:
 
 ```java
 package com.flightcontrol.dto;
@@ -611,7 +614,8 @@ public record FlightResponse(
         FlightStatus status,
         List<FlightStatus> allowedNextStatuses,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt) {
+        LocalDateTime updatedAt
+) {
 
     public static FlightResponse from(Flight flight) {
         return new FlightResponse(
@@ -629,7 +633,10 @@ public record FlightResponse(
 }
 ```
 
-`List.copyOf` over an `EnumSet` preserves declaration order, which is what `listsEveryAllowedNextStatusInDeclarationOrder` pins.
+Two things to know:
+
+- `List.copyOf` over an `EnumSet` preserves declaration order, which is what `listsEveryAllowedNextStatusInDeclarationOrder` pins.
+- Story 2's `create` response now carries the field too. That is intended — Story 3 requires flight responses to expose the transitions. Story 2's tests call `FlightResponse.from` and never construct the record directly, so the added component does not break them. If `mvn test` reports a constructor-arity error in a Story 2 test, stop and re-read that test rather than changing the record.
 
 Create `src/main/java/com/flightcontrol/controller/FlightStatusController.java`:
 
@@ -659,10 +666,12 @@ public class FlightStatusController {
     @PatchMapping("/{id}/status")
     public FlightResponse transitionStatus(@PathVariable Long id,
                                            @Valid @RequestBody StatusTransitionRequest request) {
-        return FlightResponse.from(flightService.transitionStatus(id, request.status()));
+        return flightService.transitionStatus(id, request.status());
     }
 }
 ```
+
+The service already returns the DTO, matching `create`, so the controller maps nothing.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -677,7 +686,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add pom.xml src/main/java/com/flightcontrol/dto src/main/java/com/flightcontrol/controller src/test/java/com/flightcontrol/controller
+git add src/main/java/com/flightcontrol/dto src/main/java/com/flightcontrol/controller src/test/java/com/flightcontrol/controller
 git commit -m "Add PATCH flight status endpoint with allowedNextStatuses (Story 3)"
 ```
 
@@ -693,6 +702,8 @@ git commit -m "Add PATCH flight status endpoint with allowedNextStatuses (Story 
 **Interfaces:**
 - Consumes: `FlightNotFoundException`, `IllegalStatusTransitionException` (Task 2); the endpoint from Task 3.
 - Produces: `ApiErrorResponse(LocalDateTime timestamp, int status, String error, String message, Map<String, String> fieldErrors)` with `@JsonInclude(NON_NULL)`, plus the advice that later stories extend rather than replace.
+
+Story 2's `BusinessRuleViolationException` and `DuplicateFlightNumberException` stay **unmapped** — no endpoint can raise them yet, and handlers for an unreachable path could not be tested. Whoever adds the create endpoint adds their handlers here.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -935,6 +946,7 @@ git commit -m "Add global error contract for 404, 409 and 400 (Story 3)"
 ## Definition of done
 
 - `mvn clean verify` is green with no new warnings.
-- All 11 Story 1 tests still pass; 87 tests total (11 + 49 + 18 + 9).
+- Every pre-existing test still passes, Story 2's `FlightServiceTest` included. Story 3 adds 76 tests: 49 (Task 1) + 18 (Task 2) + 9 (Tasks 3 and 4).
 - No schema change, no new columns, no `@Version`.
-- Nothing from Stories 2, 4 or 5 has been implemented.
+- `FlightService.create` and its helpers are byte-for-byte unchanged.
+- Nothing from Stories 4 or 5 has been implemented, and no create/update/delete/search endpoint exists.

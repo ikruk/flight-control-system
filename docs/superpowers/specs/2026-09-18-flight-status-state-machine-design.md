@@ -3,6 +3,34 @@
 **Story:** 3 (`docs/story.md`)
 **Date:** 2026-09-18
 **Status:** approved, ready for an implementation plan
+**Revised:** 2026-09-18, after Story 2's service-level work landed (`0cd553a`). See "Baseline".
+
+## Baseline
+
+Story 2 shipped the service layer but no HTTP layer. What already exists:
+
+- `FlightService(FlightRepository, Clock)` with `create(FlightRequest)` returning
+  a **`FlightResponse`** — the service maps to the DTO, the controller will not.
+- `FlightResponse` without `allowedNextStatuses`; `FlightRequest`; `ClockConfig`.
+- `BusinessRuleViolationException`, `DuplicateFlightNumberException`, both unmapped.
+- `FlightServiceTest`, Mockito-based against a mocked repository.
+- `spring-boot-starter-validation` in `pom.xml`.
+- `schema.sql` additionally enforces `ck_flights_flight_number_upper`.
+
+Still absent: any controller, `GlobalExceptionHandler`, `ApiErrorResponse`,
+`FlightNotFoundException`.
+
+Three decisions follow from that baseline:
+
+1. `transitionStatus` returns `FlightResponse`, matching `create`. This departs
+   from `CLAUDE.md`'s "controllers map result to response", but the code already
+   departed from it and one convention per class beats one convention per doc.
+2. Transition tests go in a new `FlightTransitionServiceTest` using `@DataJpaTest`
+   with a real repository, as this spec's Testing section requires. Story 2's
+   mock-based `FlightServiceTest` is left alone.
+3. The advice maps Story 3's exceptions only. Story 2's two exceptions cannot be
+   reached over HTTP until a create endpoint exists, so mapping them now would be
+   untested handlers for an unreachable path.
 
 ## Goal
 
@@ -50,18 +78,22 @@ the current status anyway.
 ## Components
 
 ```
-domain/FlightStatus                  allowedNextStatuses(), canTransitionTo(), isTerminal()
-service/FlightService                transitionStatus(id, target) -> Flight
-dto/StatusTransitionRequest          record { @NotNull FlightStatus status }
-dto/FlightResponse                   record + static from(Flight)
-controller/FlightStatusController    PATCH /api/flights/{id}/status
-exception/FlightNotFoundException          -> 404
-exception/IllegalStatusTransitionException -> 409
-exception/ApiErrorResponse                 the JSON error shape
-exception/GlobalExceptionHandler           @RestControllerAdvice
+domain/FlightStatus                  MODIFY  allowedNextStatuses(), canTransitionTo(), isTerminal()
+service/FlightService                MODIFY  + transitionStatus(id, target) -> FlightResponse
+dto/FlightResponse                   MODIFY  + allowedNextStatuses
+dto/StatusTransitionRequest          CREATE  record { @NotNull FlightStatus status }
+controller/FlightStatusController    CREATE  PATCH /api/flights/{id}/status
+exception/FlightNotFoundException          CREATE  -> 404
+exception/IllegalStatusTransitionException CREATE  -> 409
+exception/ApiErrorResponse                 CREATE  the JSON error shape
+exception/GlobalExceptionHandler           CREATE  @RestControllerAdvice
 ```
 
-`spring-boot-starter-validation` is the only new dependency.
+No dependency changes — `spring-boot-starter-validation` arrived with Story 2.
+
+Adding `allowedNextStatuses` to `FlightResponse` also gives Story 2's `create`
+response the field, which is what Story 3's criterion asks for ("the API response
+for a flight includes which statuses it can currently transition to").
 
 ### FlightStatus
 
@@ -102,18 +134,23 @@ type they describe).
 
 ```java
 @Transactional
-public Flight transitionStatus(Long id, FlightStatus target) {
-    Flight flight = repository.findById(id).orElseThrow(() -> new FlightNotFoundException(id));
+public FlightResponse transitionStatus(Long id, FlightStatus target) {
+    Flight flight = flightRepository.findById(id)
+            .orElseThrow(() -> new FlightNotFoundException(id));
     if (!flight.getStatus().canTransitionTo(target)) {
-        throw new IllegalStatusTransitionException(flight, target);
+        throw new IllegalStatusTransitionException(flight);
     }
     flight.setStatus(target);
-    return flight;
+    return FlightResponse.from(flight);
 }
 ```
 
-Constructor injection. The only layer that decides legality. The dirty-checked
-entity flushes on commit, and `@PreUpdate` refreshes `updated_at`.
+A new method on the existing `FlightService`, alongside `create`. The only layer
+that decides legality. The dirty-checked entity flushes on commit, and
+`@PreUpdate` refreshes `updated_at`.
+
+`IllegalStatusTransitionException` takes the flight only. The approved message
+text never names the target status, so a target parameter would be unused.
 
 ### Controller
 
@@ -136,10 +173,11 @@ PATCH /api/flights/{id}/status
 }
 ```
 
-The controller binds `@Valid @RequestBody StatusTransitionRequest`, calls the
-service, and maps the result with `FlightResponse.from(...)`. No branching on
-business state. `allowedNextStatuses` is computed from the new status, so the
-response always says where the flight can go next.
+The controller binds `@Valid @RequestBody StatusTransitionRequest` and returns
+what the service hands back. No branching on business state, and no mapping —
+`FlightService` already returns the DTO, as it does for `create`.
+`allowedNextStatuses` is computed from the new status inside `FlightResponse.from`,
+so the response always says where the flight can go next.
 
 ## Error contract
 
@@ -152,6 +190,10 @@ One `@RestControllerAdvice` produces the shape from `CLAUDE.md`, with
 | Transition not in the table | 409 | `IllegalStatusTransition` |
 | Transition from a terminal status | 409 | `IllegalStatusTransition` |
 | `status` missing or not a known name | 400 | `ValidationFailed` |
+
+Story 2's `BusinessRuleViolationException` and `DuplicateFlightNumberException`
+stay unmapped for now — no endpoint can raise them yet. The advice is the place
+they get mapped when a create endpoint lands.
 
 Messages name the current status and the allowed set, so a client never
 re-derives the rules:
@@ -175,9 +217,11 @@ legal set is written out literally in the test file, never read from
 the code equals itself. Also: the exact allowed set per status, `isTerminal()`
 for both terminal statuses, and self-transitions (covered by the 36-pair sweep).
 
-**`FlightServiceTest`** — `@DataJpaTest` + `@Import(FlightService.class)`. Real
-service, real repository, real H2, no mocks. Each test builds its own data and
-reads no seed rows.
+**`FlightTransitionServiceTest`** — `@DataJpaTest` +
+`@Import({FlightService.class, ClockConfig.class})`. Real service, real
+repository, real H2, no mocks. A new class rather than additions to Story 2's
+mock-based `FlightServiceTest`, which stays as it is. Each test builds its own
+data and reads no seed rows.
 
 - A legal transition persists and refreshes `updated_at`.
 - An illegal transition throws, with the current status and allowed set in the message.
