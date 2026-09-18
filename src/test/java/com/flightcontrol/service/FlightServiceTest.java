@@ -55,6 +55,8 @@ class FlightServiceTest {
         assertThat(response.flightNumber()).isEqualTo("BA117");
         assertThat(response.departureTime()).isEqualTo(DEPARTURE);
         assertThat(response.arrivalTime()).isEqualTo(ARRIVAL);
+        assertThat(response.allowedNextStatuses())
+                .containsExactly(FlightStatus.DELAYED, FlightStatus.DEPARTED, FlightStatus.CANCELLED);
     }
 
     @Test

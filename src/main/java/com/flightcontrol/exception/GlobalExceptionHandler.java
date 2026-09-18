@@ -13,6 +13,14 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * {@link BusinessRuleViolationException} (carries a {@code fieldErrors} map) and
+ * {@link DuplicateFlightNumberException} (the 409 duplicate-flight-number case) have no
+ * handlers here deliberately: no endpoint can raise them yet, since nothing calls
+ * {@code FlightService.create} over HTTP. Handlers for a currently unreachable path could not
+ * be tested. The story that adds a create endpoint must add handlers for both exceptions, along
+ * with tests for them.
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 

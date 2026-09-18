@@ -127,11 +127,12 @@ class FlightTransitionServiceTest {
 
     /**
      * Exhaustive coverage over the full (source, target) cross product: every pair that is not
-     * a legal transition must be rejected with the exact message the brief specifies. The pair
-     * selection is allowed to ask production code "is this legal" ({@link FlightStatus#canTransitionTo}),
-     * but the expected message text is built from a table kept independently here (ALLOWED_NEXT
-     * below), never by calling {@code allowedNextStatuses()} / {@code isTerminal()} or the
-     * exception class itself — otherwise a bug in production message-building would go undetected.
+     * a legal transition must be rejected with the exact message the brief specifies. Both the
+     * pair selection and the expected message text are built from a table kept independently
+     * here (ALLOWED_NEXT below), never by calling {@link FlightStatus#canTransitionTo},
+     * {@code allowedNextStatuses()}, {@code isTerminal()}, or the exception class itself —
+     * otherwise a bug in production code (in either transition legality or message-building)
+     * would go undetected, since the test would be validating production code against itself.
      */
     @ParameterizedTest(name = "{0} -> {1} is rejected")
     @MethodSource("illegalTransitions")
@@ -147,7 +148,7 @@ class FlightTransitionServiceTest {
     private static Stream<Arguments> illegalTransitions() {
         return Arrays.stream(FlightStatus.values())
                 .flatMap(source -> Arrays.stream(FlightStatus.values())
-                        .filter(target -> !source.canTransitionTo(target))
+                        .filter(target -> !ALLOWED_NEXT.get(source).contains(target))
                         .map(target -> Arguments.of(source, target)));
     }
 
